@@ -4,7 +4,7 @@
 
 ## 这是什么
 
-这是一个给 Obsidian 的小脚本项目：依托 Obsidian 的 Templater 插件（https://github.com/SilentVoid13/Templater），直接从本机 Zotero 的 Local API 读取文献元数据，并把这些元数据“插入到你当前打开的已有笔记里”（而不是新建笔记）。
+这是一个给 Obsidian 的小脚本项目：依托 Obsidian 的 Templater 插件(https://github.com/SilentVoid13/Templater), 直接从本机 Zotero 的 Local API 读取文献元数据，并把这些元数据“插入到你当前打开的已有笔记里”（而不是新建笔记）。
 
 适合想给 Obsidian/Zotero “瘦身”的用户：不依赖 zotero-integration / zotlit 等第三方插件，也不要求安装 Better BibTeX（如果装了会更好用：可自动拿到 citation key；没装也能正常工作，会回退到 Zotero item key）。
 
