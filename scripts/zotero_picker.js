@@ -1,15 +1,15 @@
 /**
  * zotero_picker.js
- * 使用 Zotero 本地 API + Obsidian 内部选择器抓取元数据
+ * Fetch metadata using the Zotero Local API and Obsidian's internal suggester
  */
 module.exports = async (tp) => {
     const ZOTERO_API = "http://localhost:23119/api/users/0/items";
 
     try {
-        // ============ 步骤 1: 获取文献条目列表 ============
-        new Notice("🔍 正在加载 Zotero 文献...");
+        // ============ Step 1: Fetch Zotero item list ============
+        new Notice("🔍 Loading Zotero items...");
 
-        // 获取所有文献（按最近修改排序）
+        // Retrieve all items (sorted by most recently modified)
         const response = await requestUrl({
             url: `${ZOTERO_API}?sort=dateModified&direction=desc`,
             headers: {
@@ -18,13 +18,13 @@ module.exports = async (tp) => {
         });
 
         if (response.status !== 200) {
-            new Notice("❌ 连接失败：请确保 Zotero 已打开，并在设置中启用'允许其他应用程序与 Zotero 通信'。");
+            new Notice("❌ Connection failed: make sure Zotero is running and 'Allow other applications to connect to Zotero' is enabled in settings.");
             return null;
         }
 
         const allItems = JSON.parse(response.text);
 
-        // 过滤出文献类型（排除 attachment, note, annotation 等）
+        // Filter to reference item types (exclude attachment, note, annotation, etc.)
         const validTypes = [
             'journalArticle', 'book', 'bookSection', 'conferencePaper',
             'thesis', 'report', 'preprint', 'patent', 'webpage',
@@ -36,15 +36,15 @@ module.exports = async (tp) => {
         );
 
         if (items.length === 0) {
-            new Notice("⚠️ Zotero 库中没有找到任何文献条目。");
+            new Notice("⚠️ No reference entries were found in your Zotero library.");
             return null;
         }
 
-        // ============ 步骤 2: 在 Obsidian 内部显示选择器 ============
+        // ============ Step 2: Show the chooser inside Obsidian ============
 
-        // 准备显示信息
+        // Prepare display text
         const suggestions = items.map(item => {
-            const title = item.data.title || "无标题";
+            const title = item.data.title || "Untitled";
             const creators = item.data.creators || [];
             const authors = creators
                 .slice(0, 2)
@@ -58,24 +58,24 @@ module.exports = async (tp) => {
                 : `${title} (${year})`;
         });
 
-        // 显示选择器
+        // Show the chooser
         const selectedIndex = await tp.system.suggester(
             suggestions,
             items.map((_, index) => index),
             true,
-            "选择要引用的文献"
+            "Choose a reference to cite"
         );
 
         if (selectedIndex === null || selectedIndex === undefined) {
-            new Notice("⚠️ 未选择任何文献。");
+            new Notice("⚠️ No reference selected.");
             return null;
         }
 
         const selectedItem = items[selectedIndex].data;
 
-        // ============ 步骤 3: 获取 Better BibTeX citation key ============
+        // ============ Step 3: Get Better BibTeX citation key ============
 
-        // 通过 Better BibTeX JSON-RPC 获取 citation key
+        // Fetch the citation key via Better BibTeX JSON-RPC
         const itemKey = items[selectedIndex].key;
         const bbtRequest = {
             jsonrpc: "2.0",
@@ -84,7 +84,7 @@ module.exports = async (tp) => {
             id: 1
         };
 
-        let citekey = itemKey; // 默认使用 item key
+        let citekey = itemKey; // Default to item key
         try {
             const bbtResponse = await requestUrl({
                 url: "http://localhost:23119/better-bibtex/json-rpc",
@@ -101,15 +101,15 @@ module.exports = async (tp) => {
                 citekey = bbtData.result[itemKey];
             }
         } catch (error) {
-            console.warn("无法获取 Better BibTeX citation key，使用 item key 代替:", error);
+            console.warn("Unable to fetch Better BibTeX citation key, using item key instead:", error);
         }
 
-        // ============ 步骤 4: 获取 Collections 信息 ============
+        // ============ Step 4: Get collections information ============
 
         let collectionNames = [];
         if (selectedItem.collections && selectedItem.collections.length > 0) {
             try {
-                // 获取 collections 信息
+                // Fetch collections details
                 const collectionRequests = selectedItem.collections.map(async (collectionKey) => {
                     const collectionResponse = await requestUrl({
                         url: `http://localhost:23119/api/users/0/collections/${collectionKey}`,
@@ -123,13 +123,13 @@ module.exports = async (tp) => {
 
                 collectionNames = await Promise.all(collectionRequests);
             } catch (error) {
-                console.warn("无法获取 collections 信息:", error);
+                console.warn("Unable to fetch collections information:", error);
             }
         }
 
-        // ============ 步骤 5: 清洗数据并返回 ============
+        // ============ Step 5: Clean data and return ============
 
-        // 处理作者
+        // Process authors
         let authors = "Unknown";
         if (selectedItem.creators && selectedItem.creators.length > 0) {
             authors = selectedItem.creators.map(c => {
@@ -139,20 +139,20 @@ module.exports = async (tp) => {
             }).filter(n => n).join(", ");
         }
 
-        // 处理年份
+        // Process year
         let year = "Unknown";
         if (selectedItem.date) {
             const match = selectedItem.date.match(/\d{4}/);
             if (match) year = match[0];
         }
 
-        // 处理期刊名
+        // Process journal name
         const journal = selectedItem.publicationTitle ||
                        selectedItem.bookTitle ||
                        selectedItem.conferenceName ||
                        selectedItem.publisher || "";
 
-        new Notice("✅ 已选择: " + (selectedItem.title || "未知文献"));
+        new Notice("✅ Selected: " + (selectedItem.title || "Unknown reference"));
 
         return {
             citekey: citekey,
@@ -170,7 +170,7 @@ module.exports = async (tp) => {
 
     } catch (error) {
         console.error("Zotero Picker Error:", error);
-        new Notice("❌ 脚本运行出错，请按 Cmd+Option+I 查看控制台。");
+        new Notice("❌ Script error: press Cmd+Option+I to open the console.");
         return null;
     }
 };
