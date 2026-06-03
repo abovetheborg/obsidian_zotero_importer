@@ -4,6 +4,126 @@
  */
 module.exports = async (tp) => {
     const ZOTERO_API = "http://localhost:23119/api/users/0/items";
+    const ZOTERO_WEB_API_BASE = "https://api.zotero.org";
+    const SECRET_CONFIG_PATH = "scripts/zotero_secrets.json";
+
+    const loadSecretConfig = async () => {
+        try {
+            if (typeof app !== "undefined" && app.vault?.adapter?.exists) {
+                const exists = await app.vault.adapter.exists(SECRET_CONFIG_PATH);
+                if (!exists) return {};
+                const text = await app.vault.adapter.read(SECRET_CONFIG_PATH);
+                return JSON.parse(text);
+            }
+        } catch (error) {
+            console.warn("Unable to load Zotero secret config:", error);
+        }
+        return {};
+    };
+
+    const secretConfig = await loadSecretConfig();
+    const ZOTERO_WEB_USER_ID = secretConfig.webUserId || ""; // Set this in scripts/zotero_secrets.json instead of committing to git.
+    const ZOTERO_WEB_API_KEY = secretConfig.webApiKey || ""; // Optional: your Zotero Web API key.
+
+    const buildWebApiHeaders = () => {
+        const headers = {
+            "Content-Type": "application/json"
+        };
+        if (ZOTERO_WEB_API_KEY) {
+            headers.Authorization = `Bearer ${ZOTERO_WEB_API_KEY}`;
+        }
+        return headers;
+    };
+
+    const parseAnnotationItem = (annotation) => {
+        const text = annotation.data.annotationText || annotation.data.note || annotation.data.content || "";
+        const color = annotation.data.annotationColor || annotation.data.color || "";
+        const note = annotation.data.annotationNote || annotation.data.annotationComment || annotation.data.note || "";
+        return {
+            text,
+            color,
+            note,
+            raw: annotation.data
+        };
+    };
+
+    const fetchAttachmentKeysForItem = async (itemKey) => {
+        try {
+            const attachmentResponse = await requestUrl({
+                url: `${ZOTERO_API}/${itemKey}/children?format=json&limit=1000`,
+                headers: {
+                    "Zotero-Allowed-Request": "true"
+                }
+            });
+
+            if (attachmentResponse.status !== 200) {
+                return [];
+            }
+
+            const children = JSON.parse(attachmentResponse.text);
+            return Array.isArray(children)
+                ? children
+                    .filter(child => child.data && child.data.itemType === "attachment")
+                    .map(child => child.data.key)
+                : [];
+        } catch (error) {
+            console.warn("Unable to fetch attachment keys for item", itemKey, error);
+            return [];
+        }
+    };
+
+    const fetchAnnotationsFromUrl = async (url, headers, parentKeys) => {
+        if (!parentKeys || parentKeys.length === 0) {
+            return [];
+        }
+
+        const annotationResponse = await requestUrl({
+            url,
+            headers
+        });
+
+        if (annotationResponse.status !== 200) {
+            return [];
+        }
+
+        const annotationItems = JSON.parse(annotationResponse.text);
+        if (!Array.isArray(annotationItems)) {
+            return [];
+        }
+
+        return annotationItems
+            .filter(item => item.data && item.data.itemType === "annotation" && parentKeys.includes(item.data.parentItem))
+            .map(parseAnnotationItem);
+    };
+
+    const fetchAnnotationsForItem = async (itemKey) => {
+        try {
+            const attachmentKeys = await fetchAttachmentKeysForItem(itemKey);
+            const parentKeys = [itemKey, ...attachmentKeys];
+            if (parentKeys.length === 0) {
+                return [];
+            }
+
+            const localUrl = `${ZOTERO_API}?itemType=annotation&limit=1000`;
+            const localHeaders = {
+                "Zotero-Allowed-Request": "true"
+            };
+            const localAnnotations = await fetchAnnotationsFromUrl(localUrl, localHeaders, parentKeys);
+            if (localAnnotations.length > 0) {
+                return localAnnotations;
+            }
+
+            if (!ZOTERO_WEB_USER_ID) {
+                return [];
+            }
+
+            const webUrl = `${ZOTERO_WEB_API_BASE}/users/${ZOTERO_WEB_USER_ID}/items?itemType=annotation&limit=1000`;
+            return await fetchAnnotationsFromUrl(webUrl, buildWebApiHeaders(), attachmentKeys);
+        } catch (error) {
+            console.warn("Unable to fetch annotations for item", itemKey, error);
+            return [];
+        }
+    };
 
     try {
         // ============ Step 1: Fetch Zotero item list ============
@@ -104,7 +224,10 @@ module.exports = async (tp) => {
             console.warn("Unable to fetch Better BibTeX citation key, using item key instead:", error);
         }
 
-        // ============ Step 4: Get collections information ============
+        // ============ Step 4: Get annotations/highlights ============
+        const highlights = await fetchAnnotationsForItem(itemKey);
+
+        // ============ Step 5: Get collections information ============
 
         let collectionNames = [];
         if (selectedItem.collections && selectedItem.collections.length > 0) {
@@ -163,8 +286,9 @@ module.exports = async (tp) => {
             doi: selectedItem.DOI || "",
             url: selectedItem.url || "",
             type: selectedItem.itemType || "article",
-            collections: collectionNames,  
-            abstract: selectedItem.abstractNote || "",  
+            collections: collectionNames,
+            abstract: selectedItem.abstractNote || "",
+            highlights: highlights,
             zoteroLink: `zotero://select/library/items/${itemKey}`
         };
 

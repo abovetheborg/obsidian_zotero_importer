@@ -16,6 +16,8 @@ This is for people who want a lean Obsidian/Zotero workflow:
 - Templater-only: fewer moving parts, less likely to break on major Obsidian/Zotero updates
 - Stay in Obsidian: select items from an in-app suggester list (no switching apps / external pickers)
 - Direct Zotero Local API: no export steps, still gets core metadata (title/authors/year/journal/abstract/collections)
+- Can be extended to fetch Zotero annotations/highlights (text, color, and note)
+- Optional Zotero Web API fallback for annotations if you provide your Zotero user ID / API key in `scripts/zotero_picker.js`
 
 ## Repo layout
 

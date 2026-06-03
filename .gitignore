@@ -1,2 +1,4 @@
 .DS_Store
 .vscode/
+# Local Zotero secrets file: do not commit
+scripts/zotero_secrets.json
