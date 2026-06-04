@@ -2,10 +2,24 @@
 const paper = await tp.user.zotero_picker(tp);
 if (!paper) return;
 
+const colorMap = {
+    "#5fb236": "I am in agreement",
+    "#ffd400": "Interesting",
+    "#e56eee": "Data",
+    "#f19837": "Definition",
+    "#ff6666": "I disagree",
+    "#a28ae5": "I am confused"
+};
+
 const highlightsMd = paper.highlights && paper.highlights.length > 0
-    ? paper.highlights.map((highlight, index) => `- **Highlight ${index + 1}**: ${highlight.text}
-  - **Color**: ${highlight.color || "none"}
-  - **Note**: ${highlight.note || "none"}`).join("\n")
+    ? paper.highlights.slice().reverse().map((highlight) => {
+        const pageInfo = highlight.page ? ` - ***(page ${highlight.page})***` : "";
+        const noteText = highlight.note ? highlight.note.split('\n').map(line => `> ${line}`).join('\n') : "> __";
+        const colorText = colorMap[highlight.color] || highlight.color || "Color";
+        return `> [!quote] ${colorText}
+> **${highlight.text}**${pageInfo}
+${noteText}`;
+    }).join("\n\n")
     : "_No highlights found._";
 -%>
 ---

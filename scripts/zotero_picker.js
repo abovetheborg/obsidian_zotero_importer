@@ -39,10 +39,14 @@ module.exports = async (tp) => {
         const text = annotation.data.annotationText || annotation.data.note || annotation.data.content || "";
         const color = annotation.data.annotationColor || annotation.data.color || "";
         const note = annotation.data.annotationNote || annotation.data.annotationComment || annotation.data.note || "";
+        const page = annotation.data.annotationPageLabel || annotation.data.annotationPage || "";
+        const key = annotation.key || "";
         return {
             text,
             color,
             note,
+            page,
+            key,
             raw: annotation.data
         };
     };
