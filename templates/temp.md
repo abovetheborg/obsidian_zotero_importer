@@ -2,6 +2,10 @@
 const paper = await tp.user.zotero_picker(tp);
 if (!paper) return;
 
+if (paper.citekey) {
+    await tp.file.rename(`@${paper.citekey}`);
+}
+
 const colorMap = {
     "#5fb236": "I am in agreement",
     "#ffd400": "Interesting",
@@ -50,10 +54,8 @@ type: <% paper.type %>
 > - **Tags**: <% paper.collections.map(c => "#" + c.replace(/ /g, "_")).join(" ") %>
 > - **Link**: [Zotero](<% paper.zoteroLink %>) | [DOI](https://doi.org/<% paper.doi %>)
 
-## Highlights
-<% highlightsMd %>
-
-## Abstract
+# Abstract
 <% paper.abstract %>
 
-
+# Highlights
+<% highlightsMd %>
