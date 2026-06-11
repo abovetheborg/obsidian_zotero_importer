@@ -11,12 +11,22 @@ const colorMap = {
     "#a28ae5": "I am confused"
 };
 
+const calloutMap = {
+    "#5fb236": "agree",
+    "#ff6666": "disagree",
+    "#ffd400": "interesting",
+    "#e56eee": "data",
+    "#a28ae5": "confused",
+    "#f19837": "definition"
+};
+
 const highlightsMd = paper.highlights && paper.highlights.length > 0
     ? paper.highlights.slice().reverse().map((highlight) => {
         const pageInfo = highlight.page ? ` - ***(page ${highlight.page})***` : "";
         const noteText = highlight.note ? highlight.note.split('\n').map(line => `> ${line}`).join('\n') : "> __";
         const colorText = colorMap[highlight.color] || highlight.color || "Color";
-        return `> [!quote] ${colorText}
+        const callout = calloutMap[highlight.color] || "quote";
+        return `> [!${callout}] ${colorText}
 > **${highlight.text}**${pageInfo}
 ${noteText}`;
     }).join("\n\n")
