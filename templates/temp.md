@@ -24,6 +24,17 @@ const calloutMap = {
     "#f19837": "definition"
 };
 
+const metadataBlock = [
+    `> - **Authors**: ${paper.authors}`,
+    `> - **Year**: ${paper.year}`,
+    `> - **Journal**: ${paper.journal} (${paper.year})`,
+    paper.doi ? `> - **DOI**: ${paper.doi}` : null,
+    `> - **Tags**: ${paper.collections.map(c => "#" + c.replace(/ /g, "_")).join(" ")}`,
+    paper.doi
+        ? `> - **Link**: [Zotero](${paper.zoteroLink}) | [DOI](https://doi.org/${paper.doi})`
+        : `> - **Link**: [Zotero](${paper.zoteroLink})`
+].filter(Boolean).join("\n");
+
 const highlightsMd = paper.highlights && paper.highlights.length > 0
     ? paper.highlights.slice().reverse().map((highlight) => {
         const pageInfo = highlight.page ? ` - ***(page ${highlight.page})***` : "";
@@ -47,12 +58,7 @@ url: <% paper.url %>
 type: <% paper.type %>
 ---
 > [!info] Metadata
-> - **Authors**: <% paper.authors %>
-> - **Year**: <% paper.year %>
-> - **Journal**: <% paper.journal %> (<% paper.year %>)
-> - **DOI**: <% paper.doi %>
-> - **Tags**: <% paper.collections.map(c => "#" + c.replace(/ /g, "_")).join(" ") %>
-> - **Link**: [Zotero](<% paper.zoteroLink %>) | [DOI](https://doi.org/<% paper.doi %>)
+<% metadataBlock %>
 
 # Abstract
 <% paper.abstract %>
