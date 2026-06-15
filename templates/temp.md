@@ -65,3 +65,14 @@ type: <% paper.type %>
 
 # Highlights
 <% highlightsMd %>
+
+# Notes
+<%*
+const notesMd = paper.notes && paper.notes.length > 0
+    ? paper.notes.slice().map((n, i) => {
+        const content = n.content || '';
+        return `## Note ${i+1}\n\n${content}`;
+    }).join('\n\n')
+    : "_No notes found._";
+%>
+<% notesMd %>

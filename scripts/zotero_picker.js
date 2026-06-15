@@ -76,6 +76,149 @@ module.exports = async (tp) => {
         }
     };
 
+    const parseNoteItem = (noteItem) => {
+        let content = noteItem.data.note || noteItem.data.content || noteItem.data.noteText || "";
+        
+        // Remove <div data-schema-version="9"> and closing tags
+        content = content.replace(/<div[^>]*data-schema-version="9"[^>]*>/gi, '');
+        content = content.replace(/<\/div>/gi, '');
+        
+        // Remove <p> tags (keep content)
+        content = content.replace(/<p[^>]*>/gi, '');
+        content = content.replace(/<\/p>/gi, '');
+        
+        // Shift headers by 2 levels (H1->H3, H2->H4, etc.)
+        content = content.replace(/<h([1-6])[^>]*>(.*?)<\/h\1>/gi, (_, level, txt) => {
+            const newLevel = Math.min(Number(level) + 2, 6);
+            return '<h' + newLevel + '>' + txt + '</h' + newLevel + '>';
+        });
+        
+        const key = noteItem.data.key || noteItem.key || "";
+        return {
+            content,
+            key,
+            raw: noteItem.data
+        };
+    };
+
+    // Minimal HTML -> Markdown conversion
+    const htmlToMarkdown = (html) => {
+        if (!html) return "";
+        let md = String(html);
+
+        // Remove <div data-schema-version="9"> and closing tag
+        md = md.replace(/<div[^>]*data-schema-version="9"[^>]*>/gi, '');
+        md = md.replace(/<\/div>/gi, '');
+
+        // Decode some HTML entities
+        md = md.replace(/&nbsp;/g, ' ')
+               .replace(/&amp;/g, '&')
+               .replace(/&lt;/g, '<')
+               .replace(/&gt;/g, '>')
+               .replace(/&quot;/g, '"')
+               .replace(/&#39;/g, "'");
+
+        // Headings: lower by two levels (H1->H3, H2->H4, etc.)
+        md = md.replace(/<h([1-6])[^>]*>(.*?)<\/h\1>/gi, (_, level, txt) => {
+            const newLevel = Math.min(Number(level) + 2, 6);
+            return '\n' + '#'.repeat(newLevel) + ' ' + txt + '\n';
+        });
+
+        // Paragraphs and line breaks
+        md = md.replace(/<br\s*\/?>/gi, '  \n');
+        md = md.replace(/<p[^>]*>/gi, '\n\n').replace(/<\/p>/gi, '\n\n');
+
+        // Bold/strong and italics/em
+        md = md.replace(/<(strong|b)[^>]*>(.*?)<\/\1>/gi, '**$2**');
+        md = md.replace(/<(em|i)[^>]*>(.*?)<\/\1>/gi, '*$2*');
+
+        // Code blocks and inline code
+        md = md.replace(/<pre[^>]*>\s*<code[^>]*>([\s\S]*?)<\/code>\s*<\/pre>/gi, (_, code) => {
+            return '\n```\n' + code.replace(/<[^>]+>/g, '') + '\n```\n';
+        });
+        md = md.replace(/<code[^>]*>(.*?)<\/code>/gi, '`$1`');
+
+        // Links
+        md = md.replace(/<a[^>]*href=["']?([^"' >]+)["']?[^>]*>(.*?)<\/a>/gi, '[$2]($1)');
+
+        // Lists: preserve nested structure by converting recursively
+        const convertLists = (htmlSegment, level = 0) => {
+            const listRegex = /<(ul|ol)[^>]*>([\s\S]*?)<\/\1>/i;
+            // If there's no list, return trimmed content
+            if (!listRegex.test(htmlSegment)) return htmlSegment.trim();
+
+            return htmlSegment.replace(/<(ul|ol)[^>]*>([\s\S]*?)<\/\1>/gi, (whole, listType, inner) => {
+                // Extract list items
+                const items = [];
+                inner.replace(/<li[^>]*>([\s\S]*?)<\/li>/gi, (m, liContent) => {
+                    items.push(liContent.trim());
+                    return '';
+                });
+
+                const mdItems = items.map((it, idx) => {
+                    // Recursively convert nested lists inside this item
+                    const converted = convertLists(it, level + 1).trim();
+                    const indent = '  '.repeat(level);
+                    const prefix = listType.toLowerCase() === 'ol' ? `${idx + 1}. ` : '- ';
+                    // Ensure multiline items are indented on subsequent lines
+                    const lines = converted.split(/\r?\n/).map((ln, i) => i === 0 ? ln.trim() : '  '.repeat(level + 1) + ln.trim());
+                    return indent + prefix + lines.join('\n');
+                });
+
+                return mdItems.join('\n') + '\n';
+            });
+        };
+
+        md = convertLists(md);
+
+        // Strip any remaining tags
+        md = md.replace(/<[^>]+>/g, '');
+
+        // Normalize multiple blank lines
+        md = md.replace(/\n{3,}/g, '\n\n');
+
+        // Trim
+        return md.trim();
+    };
+
+    const fetchNotesForItem = async (itemKey) => {
+        try {
+            // Try local Zotero first (children endpoint includes notes)
+            const childrenResponse = await requestUrl({
+                url: `${ZOTERO_API}/${itemKey}/children?format=json&limit=1000`,
+                headers: {
+                    "Zotero-Allowed-Request": "true"
+                }
+            });
+
+            if (childrenResponse.status === 200) {
+                const children = JSON.parse(childrenResponse.text);
+                if (Array.isArray(children) && children.length > 0) {
+                    return children
+                        .filter(child => child.data && child.data.itemType === "note")
+                        .map(parseNoteItem);
+                }
+            }
+
+            // Fallback to web API if configured
+            if (!ZOTERO_WEB_USER_ID) return [];
+
+            const webUrl = `${ZOTERO_WEB_API_BASE}/users/${ZOTERO_WEB_USER_ID}/items?itemType=note&limit=1000`;
+            const webResponse = await requestUrl({ url: webUrl, headers: buildWebApiHeaders() });
+            if (webResponse.status !== 200) return [];
+
+            const webItems = JSON.parse(webResponse.text);
+            return Array.isArray(webItems)
+                ? webItems
+                    .filter(item => item.data && item.data.itemType === "note" && item.data.parentItem === itemKey)
+                    .map(parseNoteItem)
+                : [];
+        } catch (error) {
+            console.warn("Unable to fetch notes for item", itemKey, error);
+            return [];
+        }
+    };
+
     const fetchAnnotationsFromUrl = async (url, headers, parentKeys) => {
         if (!parentKeys || parentKeys.length === 0) {
             return [];
@@ -279,6 +422,9 @@ module.exports = async (tp) => {
                        selectedItem.conferenceName ||
                        selectedItem.publisher || "";
 
+        // Fetch child notes attached to this reference
+        const notes = await fetchNotesForItem(itemKey);
+
         new Notice("✅ Selected: " + (selectedItem.title || "Unknown reference"));
 
         return {
@@ -293,6 +439,7 @@ module.exports = async (tp) => {
             collections: collectionNames,
             abstract: selectedItem.abstractNote || "",
             highlights: highlights,
+            notes: notes,
             zoteroLink: `zotero://select/library/items/${itemKey}`
         };
 
