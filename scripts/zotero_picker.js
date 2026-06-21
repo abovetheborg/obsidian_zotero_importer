@@ -76,185 +76,9 @@ module.exports = async (tp) => {
         }
     };
 
-    // Save an attachment file (by attachment item key) into the vault under the parent reference folder
+    // Attachment transfer disabled: no-op stub to avoid writing files to the vault.
     const saveAttachmentToVault = async (attachmentKey, parentRefKey, idx) => {
-        try {
-            const folder = `9000_Obsidian_Infrastructure/9200_Zotero_References/${parentRefKey}`;
-            try { await app.vault.createFolder(folder); } catch (e) { /* ignore if exists */ }
-
-            const fs = typeof require === 'function'
-                ? require('fs')
-                : (typeof window !== 'undefined' && typeof window.require === 'function' ? window.require('fs') : null);
-            const pathModule = typeof require === 'function'
-                ? require('path')
-                : (typeof window !== 'undefined' && typeof window.require === 'function' ? window.require('path') : null);
-
-            const readFsFile = async (fullPath) => {
-                if (!fs) return null;
-                try {
-                    if (fs.promises && typeof fs.promises.readFile === 'function') {
-                        const fileBuffer = await fs.promises.readFile(fullPath);
-                        return fileBuffer && fileBuffer.length > 0 ? fileBuffer : null;
-                    }
-                    if (typeof fs.readFileSync === 'function') {
-                        const fileBuffer = fs.readFileSync(fullPath);
-                        return fileBuffer && fileBuffer.length > 0 ? fileBuffer : null;
-                    }
-                } catch (e) {
-                    return null;
-                }
-                return null;
-            };
-
-            const homeDir = typeof process !== 'undefined' && process.env && process.env.HOME ? process.env.HOME : null;
-            const possibleRoots = [];
-            if (homeDir) {
-                possibleRoots.push(pathModule ? pathModule.join(homeDir, 'snap', 'zotero-snap', 'common', 'Zotero', 'storage') : `${homeDir}/snap/zotero-snap/common/Zotero/storage`);
-                possibleRoots.push(pathModule ? pathModule.join(homeDir, '.zotero', 'zotero', 'storage') : `${homeDir}/.zotero/zotero/storage`);
-                possibleRoots.push(pathModule ? pathModule.join(homeDir, '.zotero', 'storage') : `${homeDir}/.zotero/storage`);
-                possibleRoots.push(pathModule ? pathModule.join(homeDir, 'Zotero', 'storage') : `${homeDir}/Zotero/storage`);
-            }
-
-            const metaResponse = await requestUrl({
-                url: `${ZOTERO_API}/${attachmentKey}`,
-                headers: { "Zotero-Allowed-Request": "true" }
-            });
-            let attachmentMeta = null;
-            if (metaResponse && metaResponse.status === 200 && metaResponse.text) {
-                try {
-                    attachmentMeta = JSON.parse(metaResponse.text).data || null;
-                } catch (e) {
-                    attachmentMeta = null;
-                }
-            }
-            const attachmentFilename = attachmentMeta && attachmentMeta.filename ? attachmentMeta.filename : `${attachmentKey}.bin`;
-
-            let localBuffer = null;
-            let sourcePath = null;
-            for (const root of possibleRoots) {
-                const candidate = pathModule ? pathModule.join(root, attachmentKey, attachmentFilename) : `${root}/${attachmentKey}/${attachmentFilename}`;
-                const fileBuffer = await readFsFile(candidate);
-                if (fileBuffer) {
-                    localBuffer = fileBuffer;
-                    sourcePath = candidate;
-                    break;
-                }
-            }
-
-            if (!localBuffer) {
-                const fileResp = await requestUrl({
-                    url: `${ZOTERO_API}/${attachmentKey}/file`,
-                    headers: { "Zotero-Allowed-Request": "true" },
-                    binary: true,
-                    responseType: 'arraybuffer'
-                });
-                if (!fileResp) throw new Error('No response from attachment request');
-
-                const redirectLocation = fileResp.headers && (fileResp.headers.location || fileResp.headers.Location || fileResp.headers['Content-Location'] || fileResp.headers['content-location']);
-                if ((fileResp.status === 301 || fileResp.status === 302) && redirectLocation && redirectLocation.startsWith('file://')) {
-                    const localPath = decodeURIComponent(redirectLocation.replace(/^file:\/\//i, ''));
-                    const fileBuffer = await readFsFile(localPath);
-                    if (fileBuffer) {
-                        localBuffer = fileBuffer;
-                        sourcePath = localPath;
-                    }
-                }
-
-                if (!localBuffer) {
-                    if (fileResp.status !== 200) {
-                        throw new Error('Failed to fetch attachment file: ' + fileResp.status + ' redirect=' + String(redirectLocation));
-                    }
-                    if (fileResp.binary) {
-                        localBuffer = fileResp.binary;
-                    } else if (typeof fileResp.arrayBuffer === 'function') {
-                        localBuffer = await fileResp.arrayBuffer();
-                    } else {
-                        throw new Error('Attachment response returned no binary data');
-                    }
-                }
-            }
-
-            if (!localBuffer) {
-                throw new Error('Unable to resolve attachment binary data from local Zotero storage or network fallback.');
-            }
-
-            const bytes = localBuffer instanceof Uint8Array ? localBuffer : new Uint8Array(localBuffer);
-            const resp = { headers: attachmentMeta?.headers || {}, sourcePath, binary: bytes };
-
-            // Determine filename and extension
-            let ext = 'bin';
-            const contentType = resp.headers && (resp.headers['content-type'] || resp.headers['Content-Type']);
-            if (contentType) ext = (contentType.split('/')[1] || ext).split(';')[0];
-            let savedFilename = `${parentRefKey}-attach-${Date.now()}-${idx}.${ext}`;
-            const cd = resp.headers && (resp.headers['content-disposition'] || resp.headers['Content-Disposition']);
-            if (cd) {
-                const m = cd.match(/filename\*=UTF-8''([^;\n\r]+)/) || cd.match(/filename="?([^";]+)"?/);
-                if (m && m[1]) savedFilename = decodeURIComponent(m[1].replace(/"/g, ''));
-            }
-
-            const filePath = `${folder}/${savedFilename}`;
-
-            let arrayBuffer = null;
-            if (typeof resp.arrayBuffer === 'function') {
-                arrayBuffer = await resp.arrayBuffer();
-            } else if (resp.binary) {
-                arrayBuffer = resp.binary;
-            } else if (resp.text) {
-                // Fallback only if binary is unavailable.
-                try {
-                    arrayBuffer = Uint8Array.from(atob(resp.text), c => c.charCodeAt(0)).buffer;
-                } catch (e) {
-                    arrayBuffer = new TextEncoder().encode(resp.text).buffer;
-                }
-            }
-
-            if (!arrayBuffer) throw new Error('No binary data');
-            const bytes = arrayBuffer instanceof Uint8Array ? arrayBuffer : new Uint8Array(arrayBuffer);
-            const debug = { headers: resp.headers || {}, length: bytes.length, firstBytesHex: null, writeMethod: null, sourcePath: resp.sourcePath || null };
-            try {
-                const first = bytes.subarray ? bytes.subarray(0, 16) : bytes.slice(0, 16);
-                debug.firstBytesHex = Array.from(first).map(b => ('0' + b.toString(16)).slice(-2)).join(' ');
-            } catch (e) {
-                debug.firstBytesHex = 'unavailable';
-            }
-
-            if (app.vault.adapter.writeBinary) {
-                await app.vault.adapter.writeBinary(filePath, bytes);
-                debug.writeMethod = 'writeBinary';
-            } else if (app.vault.adapter.write) {
-                // Fallback: write in manageable chunks to avoid large apply(null, ...) calls
-                debug.writeMethod = 'write';
-                const CHUNK = 0x8000;
-                let i = 0;
-                const parts = [];
-                while (i < bytes.length) {
-                    const slice = bytes.subarray ? bytes.subarray(i, i + CHUNK) : bytes.slice(i, i + CHUNK);
-                    parts.push(String.fromCharCode.apply(null, slice));
-                    i += CHUNK;
-                }
-                await app.vault.adapter.write(filePath, parts.join(''));
-
-                // Also write a base64 backup to help external debugging/repair
-                try {
-                    const b64Parts = [];
-                    i = 0;
-                    while (i < bytes.length) {
-                        const slice = bytes.subarray ? bytes.subarray(i, i + CHUNK) : bytes.slice(i, i + CHUNK);
-                        b64Parts.push(btoa(String.fromCharCode.apply(null, slice)));
-                        i += CHUNK;
-                    }
-                    const b64 = b64Parts.join('');
-                    await app.vault.adapter.write(filePath + '.b64', b64);
-                    debug.b64Path = filePath + '.b64';
-                } catch (e) {
-                    debug.b64Error = String(e);
-                }
-            }
-            return { ok: true, path: filePath, debug };
-        } catch (err) {
-            console.warn('saveAttachmentToVault failed for', attachmentKey, err);
-            return { ok: false, err: String(err), src: attachmentKey };
-        }
+        return { ok: false, err: 'attachment transfer disabled' };
     };
 
     const parseNoteItem = async (noteItem, parentKey) => {
@@ -274,132 +98,8 @@ module.exports = async (tp) => {
             return '<h' + newLevel + '>' + txt + '</h' + newLevel + '>';
         });
 
-        // Helper: save image to vault and return relative path
-        const saveImageToVault = async (parentKey, src, idx) => {
-            try {
-                const folder = `9000_Obsidian_Infrastructure/9200_Zotero_References/${parentKey}`;
-                try { await app.vault.createFolder(folder); } catch (e) { /* ignore if exists */ }
-
-                // Determine filename and extension
-                let ext = 'png';
-                let baseName = `${parentKey}-img-${Date.now()}-${idx}`;
-
-                if (src.startsWith('data:')) {
-                    const match = src.match(/^data:([^;]+);base64,(.*)$/i);
-                    if (!match) return { ok: false, src, err: 'Invalid data URI' };
-                    const mime = match[1];
-                    const dataB64 = match[2];
-                    ext = mime.split('/')[1] || ext;
-                    const filePath = `${folder}/${baseName}.${ext}`;
-                    const bytes = Uint8Array.from(atob(dataB64), c => c.charCodeAt(0));
-                    if (app.vault.adapter.writeBinary) {
-                        await app.vault.adapter.writeBinary(filePath, bytes);
-                    } else if (app.vault.adapter.write) {
-                        await app.vault.adapter.write(filePath, dataB64);
-                    }
-                    return { ok: true, path: filePath };
-                }
-
-                const headers = { "Zotero-Allowed-Request": "true" };
-                const resp = await requestUrl({ url: src, headers, binary: true, responseType: 'arraybuffer' });
-                if (!resp || resp.status !== 200) return { ok: false, src, err: 'Failed to fetch image' };
-
-                const contentType = resp.headers && (resp.headers['content-type'] || resp.headers['Content-Type']);
-                if (contentType) ext = contentType.split('/')[1] || ext;
-                const urlParts = src.split('?')[0].split('/');
-                const lastPart = urlParts[urlParts.length - 1] || '';
-                if (lastPart.includes('.')) ext = lastPart.split('.').pop().slice(0,4) || ext;
-
-                const filePath = `${folder}/${baseName}.${ext}`;
-
-                let arrayBuffer = null;
-                if (typeof resp.arrayBuffer === 'function') {
-                    arrayBuffer = await resp.arrayBuffer();
-                } else if (resp.binary) {
-                    arrayBuffer = resp.binary;
-                } else if (resp.text) {
-                    try {
-                        arrayBuffer = Uint8Array.from(atob(resp.text), c => c.charCodeAt(0)).buffer;
-                    } catch (e) {
-                        arrayBuffer = new TextEncoder().encode(resp.text).buffer;
-                    }
-                }
-
-                if (!arrayBuffer) return { ok: false, src, err: 'No binary data' };
-
-                const bytes = arrayBuffer instanceof Uint8Array ? arrayBuffer : new Uint8Array(arrayBuffer);
-                const debug = { headers: resp.headers || {}, length: bytes.length, firstBytesHex: null, writeMethod: null, sourcePath: resp.sourcePath || null };
-                try {
-                    const first = bytes.subarray ? bytes.subarray(0, 16) : bytes.slice(0, 16);
-                    debug.firstBytesHex = Array.from(first).map(b => ('0' + b.toString(16)).slice(-2)).join(' ');
-                } catch (e) {
-                    debug.firstBytesHex = 'unavailable';
-                }
-
-                if (app.vault.adapter.writeBinary) {
-                    await app.vault.adapter.writeBinary(filePath, bytes);
-                    debug.writeMethod = 'writeBinary';
-                } else if (app.vault.adapter.write) {
-                    // Fallback: write in manageable chunks to avoid large apply(null, ...) calls
-                    debug.writeMethod = 'write';
-                    const CHUNK = 0x8000;
-                    let i = 0;
-                    const parts = [];
-                    while (i < bytes.length) {
-                        const slice = bytes.subarray ? bytes.subarray(i, i + CHUNK) : bytes.slice(i, i + CHUNK);
-                        parts.push(String.fromCharCode.apply(null, slice));
-                        i += CHUNK;
-                    }
-                    await app.vault.adapter.write(filePath, parts.join(''));
-
-                    // Also write a base64 backup to help external debugging/repair
-                    try {
-                        const b64Parts = [];
-                        i = 0;
-                        while (i < bytes.length) {
-                            const slice = bytes.subarray ? bytes.subarray(i, i + CHUNK) : bytes.slice(i, i + CHUNK);
-                            b64Parts.push(btoa(String.fromCharCode.apply(null, slice)));
-                            i += CHUNK;
-                        }
-                        const b64 = b64Parts.join('');
-                        await app.vault.adapter.write(filePath + '.b64', b64);
-                        debug.b64Path = filePath + '.b64';
-                    } catch (e) {
-                        debug.b64Error = String(e);
-                    }
-                }
-                return { ok: true, path: filePath, debug };
-            } catch (err) {
-                return { ok: false, src, err: String(err) };
-            }
-        };
-
-        // Replace <img> tags with markdown image links, downloading images
-        const imgRegex = /<img[^>]*src=["']([^"']+)["'][^>]*>/gi;
-        let match;
-        let imgIndex = 0;
-        const replacements = [];
-        const debugMsgs = [];
-        while ((match = imgRegex.exec(content)) !== null) {
-            imgIndex += 1;
-            const src = match[1];
-            const saved = await saveImageToVault(parentKey || 'zotero', src, imgIndex);
-            if (saved && saved.ok) {
-                replacements.push({ original: match[0], replacement: `![](${saved.path})` });
-                debugMsgs.push(`Downloaded: ${src} -> ${saved.path}`);
-            } else {
-                replacements.push({ original: match[0], replacement: `![](${src})` });
-                debugMsgs.push(`Failed: ${src} (${saved && saved.err ? saved.err : 'unknown error'})`);
-            }
-        }
-
-        for (const r of replacements) {
-            content = content.split(r.original).join(r.replacement);
-        }
-
-        if (debugMsgs.length > 0) {
-            content += '\n\n---\n**Image import debug**\n' + debugMsgs.map(m => '- ' + m).join('\n');
-        }
+        // Image transfer disabled: convert <img> tags to markdown links without downloading
+        content = content.replace(/<img[^>]*src=["']([^"']+)["'][^>]*>/gi, (m, src) => `![](${src})`);
 
         const key = noteItem.data.key || noteItem.key || "";
         return {
@@ -552,16 +252,9 @@ module.exports = async (tp) => {
             const parsedItem = parseAnnotationItem(item);
             try {
                 const ann = item.data || {};
-                if ((ann.annotationType === 'image' || ann.annotationType === 'image') && ann.parentItem) {
-                    // parentItem may be the attachment key; try to download it
-                    const saved = await saveAttachmentToVault(ann.parentItem, parentRefKey || ann.parentItem, idx+1);
-                    if (saved && saved.ok) {
-                        parsedItem.imagePath = saved.path;
-                        if (saved.debug) parsedItem.imageDebug = saved.debug;
-                    } else {
-                        parsedItem.imageError = saved && saved.err ? saved.err : 'download_failed';
-                        if (saved && saved.debug) parsedItem.imageDebug = saved.debug;
-                    }
+                if (ann.parentItem) {
+                    // Image transfer disabled: record the referenced attachment key only
+                    parsedItem.imageRef = ann.parentItem;
                 }
             } catch (e) {
                 // ignore per-item errors
@@ -594,7 +287,7 @@ module.exports = async (tp) => {
             }
 
             const webUrl = `${ZOTERO_WEB_API_BASE}/users/${ZOTERO_WEB_USER_ID}/items?itemType=annotation&limit=1000`;
-            return await fetchAnnotationsFromUrl(webUrl, buildWebApiHeaders(), attachmentKeys, itemKey);
+            return await fetchAnnotationsFromUrl(webUrl, buildWebApiHeaders(), parentKeys, itemKey);
         } catch (error) {
             console.warn("Unable to fetch annotations for item", itemKey, error);
             return [];

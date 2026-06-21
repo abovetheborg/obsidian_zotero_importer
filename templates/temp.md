@@ -2,13 +2,33 @@
 const paper = await tp.user.zotero_picker(tp);
 if (!paper) return;
 
-if (paper.citekey) {
+const targetFolder = "3000_Litterature_Notes/3200_Zotero";
+try {
+    if (typeof app !== "undefined" && app.vault?.createFolder) {
+        await app.vault.createFolder(targetFolder);
+    }
+} catch (err) {
+    // Folder creation is best-effort; Templater rename may still work if the folder exists.
+}
+
+const activeFile = typeof app !== "undefined" && app.workspace ? app.workspace.getActiveFile() : null;
+if (paper.citekey && activeFile) {
     try {
-        await tp.file.rename(`@${paper.citekey}`);
+        await app.vault.createFolder(targetFolder);
     } catch (err) {
-        // If destination exists or rename fails, fallback to a unique name
-        const safeName = `@${paper.citekey}-${tp.date.now("YYYYMMDD-HHmmss")}`;
-        await tp.file.rename(safeName);
+        // ignore if folder already exists or creation fails
+    }
+
+    const targetPath = `${targetFolder}/@${paper.citekey}.md`;
+    try {
+        await app.vault.rename(activeFile, targetPath);
+    } catch (err) {
+        const safeName = `${targetFolder}/@${paper.citekey}-${tp.date.now("YYYYMMDD-HHmmss")}.md`;
+        try {
+            await app.vault.rename(activeFile, safeName);
+        } catch (err2) {
+            // fallback: leave the file where it is
+        }
     }
 }
 
@@ -30,6 +50,15 @@ const calloutMap = {
     "#f19837": "definition"
 };
 
+const sanitizePropertyValue = (value) => {
+    const text = String(value ?? "")
+        .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, " ")
+        .replace(/\r?\n+/g, " ")
+        .trim();
+    const escaped = text.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+    return `"${escaped}"`;
+};
+
 const highlightsMd = paper.highlights && paper.highlights.length > 0
     ? paper.highlights.slice().reverse().map((highlight) => {
         const pageInfo = highlight.page ? ` - ***(page ${highlight.page})***` : "";
@@ -45,17 +74,17 @@ ${noteText}${imagePart}`;
 -%>
 ---
 Gov_type: litterature_notes
-title: <% paper.title %>
-citekey: <% paper.citekey %>
-collections: <% paper.collections.join(", ") %>
-authors: <% paper.authors %>
-year: <% paper.year %>
-journal: <% paper.journal %>
-doi: <% paper.doi %>
-url: <% paper.url %>
-type: <% paper.type %>
-imported_date: <% tp.date.now("YYYY-MM-DD HH:mm:ss") %>
-zotero_link: <% paper.zoteroLink %>
+title: <% sanitizePropertyValue(paper.title) %>
+citekey: <% sanitizePropertyValue(paper.citekey) %>
+collections: <% sanitizePropertyValue((paper.collections || []).join(", ")) %>
+authors: <% sanitizePropertyValue(paper.authors) %>
+year: <% sanitizePropertyValue(paper.year) %>
+journal: <% sanitizePropertyValue(paper.journal) %>
+doi: <% sanitizePropertyValue(paper.doi) %>
+url: <% sanitizePropertyValue(paper.url) %>
+type: <% sanitizePropertyValue(paper.type) %>
+imported_date: <% sanitizePropertyValue(tp.date.now("YYYY-MM-DD HH:mm:ss")) %>
+zotero_link: <% sanitizePropertyValue(paper.zoteroLink) %>
 ---
 
 # Abstract
@@ -74,9 +103,3 @@ const notesMd = paper.notes && paper.notes.length > 0
     : "_No notes found._";
 %>
 <% notesMd %>
-
----
-**Debug: raw Zotero data**
-```json
-<% JSON.stringify({notes: paper.notes || [], highlights: paper.highlights || []}, null, 2) %>
-```
